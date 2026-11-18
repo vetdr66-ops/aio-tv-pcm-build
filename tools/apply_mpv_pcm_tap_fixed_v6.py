@@ -93,10 +93,8 @@ def patch_staged(root):
         new_init,
         '    atomic_store_explicit(&pcm_tap.tail, 0u, memory_order_relaxed);\n',
         '', 'initializer tail preservation')
-    new_init = replace_once(
-        new_init,
-        'atomic_is_lock_free(&pcm_tap.enabled)',
-        'atomic_is_lock_free(&pcm_tap.state)', 'initializer lock-free state')
+    if new_init.count('atomic_is_lock_free(&pcm_tap.state)') != 1:
+        raise RuntimeError('initializer lock-free state check is missing or duplicated.')
     if ('pcm_tap_reset' in new_init or
             'atomic_store_explicit(&pcm_tap.head,' in new_init or
             'atomic_store_explicit(&pcm_tap.tail,' in new_init):
