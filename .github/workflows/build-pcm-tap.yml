@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: media-kit/libmpv-android-video-build
-          ref: master
+          ref: main
           path: upstream
 
       - name: Install Java
