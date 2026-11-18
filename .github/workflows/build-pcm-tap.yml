@@ -1,0 +1,91 @@
+name: Build PCM Tap MPV
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build patched libmpv for Android
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout PCM build configuration
+        uses: actions/checkout@v4
+
+      - name: Validate PCM patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s patches/mpv/0001-pcm-tap.patch || {
+            echo "::error::Missing patches/mpv/0001-pcm-tap.patch. Add the verified patch file to this repository first."
+            exit 1
+          }
+
+      - name: Checkout official Media Kit Android build scripts
+        uses: actions/checkout@v4
+        with:
+          repository: media-kit/libmpv-android-video-build
+          ref: master
+          path: upstream
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install PCM patch into MPV patch queue
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p upstream/buildscripts/patches/mpv
+          cp patches/mpv/0001-pcm-tap.patch upstream/buildscripts/patches/mpv/0001-pcm-tap.patch
+
+      - name: Link Android SDK
+        working-directory: upstream/buildscripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sdk
+          ln -s "${ANDROID_HOME}" sdk/android-sdk-linux
+
+      - name: Build default flavor for all Android ABIs
+        working-directory: upstream/buildscripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x bundle_default.sh
+          ./bundle_default.sh
+
+      - name: Verify PCM symbols in ARM libraries
+        working-directory: upstream/buildscripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK_VERSION=25.2.9519653
+          LLVM="${ANDROID_HOME}/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          for ABI in arm64-v8a armeabi-v7a; do
+            LIB="prefix/${ABI}/usr/local/lib/libmpv.so"
+            echo "Checking ${ABI}: ${LIB}"
+            "${LLVM}" -D --defined-only "${LIB}" | grep -E 'mpv_pcm_tap_(set_enabled|read|dropped|diagnostic_state)$'
+            COUNT=$("${LLVM}" -D --defined-only "${LIB}" | grep -Ec 'mpv_pcm_tap_(set_enabled|read|dropped|diagnostic_state)$')
+            test "${COUNT}" -eq 4
+          done
+
+      - name: Upload ABI JARs
+        uses: actions/upload-artifact@v4
+        with:
+          name: aio-tv-pcm-tap-android-jars
+          path: |
+            upstream/buildscripts/artifacts/default/default-arm64-v8a.jar
+            upstream/buildscripts/artifacts/default/default-armeabi-v7a.jar
+            upstream/buildscripts/artifacts/default/default-x86.jar
+            upstream/buildscripts/artifacts/default/default-x86_64.jar
+          if-no-files-found: error
+          retention-days: 14
