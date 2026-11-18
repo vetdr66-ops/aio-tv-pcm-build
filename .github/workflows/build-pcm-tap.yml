@@ -2,6 +2,9 @@ name: Build PCM Tap MPV (V6 validation)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - pcm-tap-v6-validation
 
 permissions:
   contents: read
