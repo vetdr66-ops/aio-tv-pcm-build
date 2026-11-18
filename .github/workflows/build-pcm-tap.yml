@@ -53,7 +53,7 @@ jobs:
           diff -u <(printf '%s\n' "${EXPECTED}") <(printf '%s\n' "${ACTUAL}")
 
           AUDIO="${MPV_DIR}/audio/out/ao_audiotrack.c"
-          if grep -nE 'atomic_(store|init).*pcm_tap\.(head|tail)' "${AUDIO}"; then
+          if grep -nE 'atomic_(store|init)(_explicit)?[[:space:]]*\\([[:space:]]*&pcm_tap\\.(head|tail)[[:space:]]*,[[:space:]]*0([uU])?([,)]|[[:space:]])' "${AUDIO}"; then
             echo "::error::PCM queue head/tail must not be reset."
             exit 1
           fi
@@ -62,7 +62,7 @@ jobs:
           grep -q 'diagnostic_state, -20' "${AUDIO}"
           for SYMBOL in mpv_pcm_tap_set_enabled mpv_pcm_tap_read mpv_pcm_tap_dropped mpv_pcm_tap_diagnostic_state; do
             grep -q "${SYMBOL}" "${MPV_DIR}/libmpv/client.h"
-            grep -Eq '^(int|uint32_t) ${SYMBOL}' "${AUDIO}"
+            grep -Eq "^(int|uint32_t) ${SYMBOL}" "${AUDIO}"
           done
 
           git -C "${MPV_DIR}" diff --binary > "${RUNNER_TEMP}/0001-pcm-tap-v6.patch"
