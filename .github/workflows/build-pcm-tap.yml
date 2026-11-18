@@ -1,4 +1,4 @@
-name: Build PCM Tap MPV
+name: Build PCM Tap MPV (V6 validation)
 
 on:
   workflow_dispatch:
@@ -8,21 +8,73 @@ permissions:
 
 jobs:
   build:
-    name: Build patched libmpv for Android
+    name: Generate, verify and build patched libmpv
     runs-on: ubuntu-22.04
     timeout-minutes: 360
+    env:
+      MPV_COMMIT: 78d43740f52db817d98bcf24fb30a76ab6fa13ff
+      MPV_DIR: ${{ github.workspace }}/mpv-78d43740f52db817d98bcf24fb30a76ab6fa13ff
     steps:
       - name: Checkout PCM build configuration
         uses: actions/checkout@v4
 
-      - name: Validate PCM patch
+      - name: Checkout exact MPV source commit
+        uses: actions/checkout@v4
+        with:
+          repository: mpv-player/mpv
+          ref: 78d43740f52db817d98bcf24fb30a76ab6fa13ff
+          path: mpv-78d43740f52db817d98bcf24fb30a76ab6fa13ff
+          fetch-depth: 0
+
+      - name: Validate V6 patch generator syntax
         shell: bash
         run: |
           set -euo pipefail
-          test -s patches/mpv/0001-pcm-tap.patch || {
-            echo "::error::Missing patches/mpv/0001-pcm-tap.patch. Add the verified patch file to this repository first."
+          test -s tools/apply_mpv_pcm_tap_fixed_v6.py
+          python3 -m py_compile tools/apply_mpv_pcm_tap_fixed_v6.py
+
+      - name: Generate five-file PCM patch on pinned MPV source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/apply_mpv_pcm_tap_fixed_v6.py "${MPV_DIR}"
+          git -C "${MPV_DIR}" diff --check
+
+          EXPECTED="$(printf '%s\n' \
+            audio/out/ao.h \
+            audio/out/ao_audiotrack.c \
+            audio/out/buffer.c \
+            audio/out/internal.h \
+            libmpv/client.h | sort)"
+          ACTUAL="$(git -C "${MPV_DIR}" diff --name-only | sort)"
+          diff -u <(printf '%s\n' "${EXPECTED}") <(printf '%s\n' "${ACTUAL}")
+
+          AUDIO="${MPV_DIR}/audio/out/ao_audiotrack.c"
+          if grep -nE 'atomic_(store|init).*pcm_tap\.(head|tail)' "${AUDIO}"; then
+            echo "::error::PCM queue head/tail must not be reset."
             exit 1
-          }
+          fi
+          grep -q 'slot->generation != generation' "${AUDIO}"
+          grep -q 'pcm_tap_advance_generation();' "${AUDIO}"
+          grep -q 'diagnostic_state, -20' "${AUDIO}"
+          for SYMBOL in mpv_pcm_tap_set_enabled mpv_pcm_tap_read mpv_pcm_tap_dropped mpv_pcm_tap_diagnostic_state; do
+            grep -q "${SYMBOL}" "${MPV_DIR}/libmpv/client.h"
+            grep -q "^(int\|uint32_t\) ${SYMBOL}" "${AUDIO}"
+          done
+
+          git -C "${MPV_DIR}" diff --binary > "${RUNNER_TEMP}/0001-pcm-tap-v6.patch"
+          test -s "${RUNNER_TEMP}/0001-pcm-tap-v6.patch"
+
+      - name: Verify patch applies to a second clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLEAN="${RUNNER_TEMP}/mpv-clean"
+          git -C "${MPV_DIR}" worktree add --detach "${CLEAN}" "${MPV_COMMIT}"
+          git -C "${CLEAN}" apply --check "${RUNNER_TEMP}/0001-pcm-tap-v6.patch"
+          git -C "${CLEAN}" apply "${RUNNER_TEMP}/0001-pcm-tap-v6.patch"
+          git -C "${CLEAN}" diff --check
+          git -C "${CLEAN}" diff --name-only | sort
 
       - name: Checkout official Media Kit Android build scripts
         uses: actions/checkout@v4
@@ -30,6 +82,15 @@ jobs:
           repository: media-kit/libmpv-android-video-build
           ref: main
           path: upstream
+
+      - name: Verify upstream MPV commit and install generated patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fx "v_mpv=${MPV_COMMIT}" upstream/buildscripts/include/depinfo.sh
+          mkdir -p upstream/buildscripts/patches/mpv
+          cp "${RUNNER_TEMP}/0001-pcm-tap-v6.patch" upstream/buildscripts/patches/mpv/0001-pcm-tap.patch
+          test -s upstream/buildscripts/patches/mpv/0001-pcm-tap.patch
 
       - name: Install Java
         uses: actions/setup-java@v4
@@ -39,13 +100,6 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Install PCM patch into MPV patch queue
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p upstream/buildscripts/patches/mpv
-          cp patches/mpv/0001-pcm-tap.patch upstream/buildscripts/patches/mpv/0001-pcm-tap.patch
 
       - name: Link Android SDK
         working-directory: upstream/buildscripts
@@ -78,10 +132,10 @@ jobs:
             test "${COUNT}" -eq 4
           done
 
-      - name: Upload ABI JARs
+      - name: Upload verified ABI JARs
         uses: actions/upload-artifact@v4
         with:
-          name: aio-tv-pcm-tap-android-jars
+          name: aio-tv-pcm-tap-v6-android-jars
           path: |
             upstream/buildscripts/artifacts/default/default-arm64-v8a.jar
             upstream/buildscripts/artifacts/default/default-armeabi-v7a.jar
