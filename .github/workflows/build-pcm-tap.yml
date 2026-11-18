@@ -62,7 +62,7 @@ jobs:
           grep -q 'diagnostic_state, -20' "${AUDIO}"
           for SYMBOL in mpv_pcm_tap_set_enabled mpv_pcm_tap_read mpv_pcm_tap_dropped mpv_pcm_tap_diagnostic_state; do
             grep -q "${SYMBOL}" "${MPV_DIR}/libmpv/client.h"
-            grep -q "^(int\|uint32_t\) ${SYMBOL}" "${AUDIO}"
+            grep -Eq '^(int|uint32_t) ${SYMBOL}' "${AUDIO}"
           done
 
           git -C "${MPV_DIR}" diff --binary > "${RUNNER_TEMP}/0001-pcm-tap-v6.patch"
